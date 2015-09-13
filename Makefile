@@ -63,6 +63,7 @@ endif
 	$(MAKE) -C $(COMMON) CF=$(CF) EXT_CFLAGS="$(EXT_CFLAGS)"
 	$(MAKE) -C $(CF)
 	$(MAKE) -C $(MOD_LUA) CF=$(CF) COMMON=$(COMMON) LUA_CORE=$(LUA_CORE) EXT_CFLAGS="$(EXT_CFLAGS)" USE_LUAJIT=$(USE_LUAJIT) LUAJIT=$(LUAJIT)
+	$(MAKE) -C $(MOD_GO) COMMON=$(COMMON)
 	$(MAKE) -C xdr
 	$(MAKE) -C ai
 	$(MAKE) -C as
@@ -80,7 +81,7 @@ strip:	server
 .PHONY: init start stop
 init:
 	@echo "Creating and initializing working directories..."
-	mkdir -p run/log run/work/smd run/work/sys/udf/lua run/work/usr/udf/lua
+	mkdir -p run/log run/work/smd run/work/sys/udf/lua run/work/usr/udf/lua run/work/usr/udf/go
 	cp -pr modules/lua-core/src/* run/work/sys/udf/lua
 
 start:
@@ -113,6 +114,7 @@ cleanmodules:
 		$(MAKE) -C $(LUAJIT) clean; \
 	fi
 	$(MAKE) -C $(MOD_LUA) COMMON=$(COMMON) LUA_CORE=$(LUA_CORE) USE_LUAJIT=$(USE_LUAJIT) LUAJIT=$(LUAJIT) clean
+	$(MAKE) -C $(MOD_GO) COMMON=$(COMMON) clean
 
 .PHONY: cleandist
 cleandist:
@@ -136,6 +138,7 @@ cleangit:
 	cd $(LUA_CORE); $(GIT_CLEAN)
 	cd $(LUAJIT); $(GIT_CLEAN)
 	cd $(MOD_LUA); $(GIT_CLEAN)
+	cd $(MOD_GO); $(GIT_CLEAN)
 	$(GIT_CLEAN)
 
 .PHONY: rpm deb tar

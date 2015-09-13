@@ -35,6 +35,7 @@
 #include "xdr_config.h"
 
 #include "aerospike/mod_lua_config.h"
+#include "aerospike/mod_go_config.h"
 #include "citrusleaf/cf_atomic.h"
 
 #include "hist.h"
@@ -191,7 +192,7 @@ typedef struct as_config_s {
 
 	// whether to collect storage benchmarks
 	bool				storage_benchmarks;
-	
+
 	// whether to collect ldt benchmarks
 	bool				ldt_benchmarks;
 
@@ -315,7 +316,7 @@ typedef struct as_config_s {
 	histogram      *_sindex_gc_pimd_rlock_hist;   // HIstogram to track time spent under pimd rlock by sindex GC
 	histogram      *_sindex_gc_pimd_wlock_hist;   // Histogram to track time spent under pimd wlock by sindex GC
 
-	bool                qnodes_pre_reserved;      // If true we will reserve all the qnodes upfront 
+	bool                qnodes_pre_reserved;      // If true we will reserve all the qnodes upfront
 												  // before processing query. Default - TRUE
 	cf_atomic64			query_reqs;
 	cf_atomic64			query_fail;
@@ -667,6 +668,9 @@ typedef struct as_config_s {
 
 	// MOD_LUA Config
 	mod_lua_config		mod_lua;
+
+	// mod_go config
+	mod_go_config       mod_go;
 
 	// Cluster Config Info
 	cluster_config_t	cluster;

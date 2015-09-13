@@ -1,3 +1,11 @@
+## Fork for mod-go
+This is a fork of the aerospike-server. This fork's branch `mod-go` adds experimental support for [Go](https://golang.org) UDF modules.
+
+**This project is experimental and should NOT be used in production. Git history will be rewritten.**
+
+Go to https://github.com/GeertJohan/aerospike-mod-go for more information.
+
+
 # Aerospike Database Server
 
 Welcome to the Aerospike Database Server source code tree!
@@ -67,6 +75,7 @@ The Aerospike Database Server build depends upon 7 submodules:
 | jemalloc  | The JEMalloc Memory Allocator |
 | lua-core  | The Aerospike Core Lua Source Files |
 | luajit    | The LuaJIT (Just-In-Time Compiler for Lua) |
+| mod-go    | The Aerospike Go UDF module |
 | mod-lua   | The Aerospike Lua Interface |
 
 After the initial cloning of the `aerospike-server` repo., the

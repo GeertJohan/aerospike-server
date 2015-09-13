@@ -36,6 +36,7 @@
 #include "jansson.h"
 
 #include "aerospike/as_module.h"
+#include "aerospike/mod_go.h"
 #include "aerospike/mod_lua.h"
 #include "citrusleaf/alloc.h"
 #include "citrusleaf/cf_b64.h"
@@ -50,7 +51,7 @@
 
 char udf_smd_module_name[] = "UDF";
 
-char *as_udf_type_name[] = {"LUA", 0};
+char *as_udf_type_name[] = {"LUA", "GO", 0};
 
 // TODO - promote to thr_info.h.
 extern int as_info_parameter_get(char *param_str, char *param, char *value, int  *value_len);
@@ -59,11 +60,25 @@ static int file_read(char *, uint8_t **, size_t *, unsigned char *);
 static int file_write(char *, uint8_t *, size_t, unsigned char *);
 static int file_remove(char *);
 static int file_generation(char *, uint8_t *, size_t, unsigned char *);
+static int file_udf_type(char *);
+static char * file_user_path(char *);
+
+static int udf_name_type(char *);
+static char * udf_type_getuserpath(int);
+static as_module * udf_type_getmod(int);
+
+static bool hasext(const char * name, size_t name_len, const char * ext, size_t ext_len) {
+	const char * p = (name + name_len - ext_len);
+	if ( strncmp(p, ext, ext_len) == 0 ) {
+		return true;
+	}
+	return false;
+}
 
 static inline int file_resolve(char * filepath, char * filename, char * ext) {
 
 	char *  p               = filepath;
-	char *  user_path       = g_config.mod_lua.user_path;
+	char *  user_path       = file_user_path(filename);
 	size_t  user_path_len   = strlen(user_path);
 	int     filename_len    = strlen(filename);
 
@@ -89,7 +104,7 @@ static inline int file_resolve(char * filepath, char * filename, char * ext) {
 
 static int file_read(char * filename, uint8_t ** content, size_t * content_len, unsigned char * hash) {
 
-	char    filepath[256]   = {0};
+	char    filepath[256]   = {0}; // TODO: I (GeertJohan) see paths having max length of 1024 in other places, why is it 256 here?
 	FILE *  file            = NULL;
 	char    line[1024]      = {0};
 	size_t  line_len        = sizeof(line);
@@ -142,6 +157,11 @@ static int file_write(char * filename, uint8_t * content, size_t content_len, un
 
 	FILE *  file            = NULL;
 	char    filepath[256]   = {0};
+	char *  user_path       = file_user_path(filename);
+
+	if (user_path == NULL) {
+		return -1;
+	}
 
 	file_resolve(filepath, filename, NULL);
 
@@ -166,6 +186,10 @@ static int file_write(char * filename, uint8_t * content, size_t content_len, un
 
 static int file_remove(char * filename) {
 	char filepath[256] = {0};
+	char * user_path = file_user_path(filename);
+	if (user_path == NULL) {
+		return -1;
+	}
 	file_resolve(filepath, filename, NULL);
 	unlink(filepath);
 	return 0;
@@ -180,16 +204,77 @@ static int file_generation(char * filename, uint8_t * content, size_t content_le
 	return 0;
 }
 
+// file_udf_type returns udf mod type assumed from file extension.
+// otherwise returns -1
+static int file_udf_type(char * filename) {
+
+	// char * lastdot = strrchr(filename, '.');
+	// if (lastdot != NULL && strcmp(lastdot, ".lua")==0) {
+	// 	return AS_UDF_TYPE_LUA;
+	// }
+	//
+	// char * firstdot = strchr(filename, '.');
+	// if (firstdot != NULL && strcmp(firstdot, ".go.so")==0) {
+	// 	return AS_UDF_TYPE_GO;
+	// }
+	if(hasext(filename, strlen(filename), ".lua", strlen(".lua"))) {
+		return AS_UDF_TYPE_LUA;
+	}
+	if(hasext(filename, strlen(filename), ".go.so", strlen(".go.so"))) {
+		return AS_UDF_TYPE_GO;
+	}
+
+	// TODO: are lua files without the `.lua` extension currently accepted? If so: this is a breaking change in behaviour.
+	cf_warning(AS_UDF, "could not detect udf mod type for file %s", filename);
+	return -1;
+}
+
+// file_user_path returns the user_path for given filename, assumed from extension.
+static char * file_user_path(char * filename) {
+	int typeid = file_udf_type(filename);
+	if (typeid == -1) {
+		cf_warning(AS_UDF, "could not locate user_path for file %s", filename);
+		return NULL;
+	}
+
+	return udf_type_getuserpath(typeid);
+}
+
 // return -1 if not found otherwise the index in as_udf_type_name
-static int udf_type_getid(char *type) {
+static int udf_name_type(char *name) {
 	int index = 0;
 	while (as_udf_type_name[index]) {
-		if (strcmp( type, as_udf_type_name[index]) == 0 ) {
+		if (strcmp( name, as_udf_type_name[index]) == 0 ) {
 			return(index);
 		}
 		index++;
 	}
 	return(-1);
+}
+
+// udf_type_getuserpath returns the mod user_path for given udf type id.
+static char * udf_type_getuserpath(int type) {
+	switch (type) {
+		case AS_UDF_TYPE_LUA:
+			return g_config.mod_lua.user_path;
+		case AS_UDF_TYPE_GO:
+			return g_config.mod_go.user_path;
+		default:
+			cf_warning(AS_UDF, "udf_type_getuserpath: invalid type %d", type);
+			return NULL;
+	}
+}
+
+static as_module * udf_type_getmod(int type) {
+	switch (type) {
+		case AS_UDF_TYPE_LUA:
+			return &mod_lua;
+		case AS_UDF_TYPE_GO:
+			return &mod_go;
+		default:
+			cf_warning(AS_UDF, "udf_type_getmod: invalid type %d", type);
+			return NULL;
+	}
 }
 
 /*
@@ -207,19 +292,23 @@ typedef struct udf_get_data_s {
  */
 static int udf_cask_get_metadata_cb(char *module, as_smd_item_list_t *items, void *udata)
 {
+	cf_debug(AS_UDF, "udf_cask_get_metadata_cb: got callback");
 	udf_get_data_t *p_get_data = (udf_get_data_t *) udata;
 	cf_dyn_buf *out = p_get_data->db;
 
 	unsigned char   hash[SHA_DIGEST_LENGTH];
 	// hex string to be returned to the client
 	unsigned char   sha1_hex_buff[CF_SHA_HEX_BUFF_LEN];
-	// Currently just return directly for LUA
-	uint8_t udf_type = AS_UDF_TYPE_LUA;
 
 	for (int index = 0; index < items->num_items; index++) {
 		as_smd_item_t *item = items->item[index];
-		cf_debug(AS_UDF, "UDF metadata item[%d]:  module \"%s\" ; key \"%s\" ; value \"%s\" ; generation %u ; timestamp %lu",
-				 index, item->module_name, item->key, item->value, item->generation, item->timestamp);
+
+		// udf type detection based on filename
+		int udf_type = file_udf_type(item->key);
+		char * udf_type_name = as_udf_type_name[udf_type];
+		
+		cf_debug(AS_UDF, "UDF metadata item[%d]:  module \"%s\" ; key \"%s\" ; type \"%s\" ; base64-size \"%d\" ; generation %u ; timestamp %lu",
+				 index, item->module_name, item->key, udf_type_name, strlen(item->value), item->generation, item->timestamp);
 		cf_dyn_buf_append_string(out, "filename=");
 		cf_dyn_buf_append_buf(out, (uint8_t *)item->key, strlen(item->key));
 		cf_dyn_buf_append_string(out, ",");
@@ -230,11 +319,13 @@ static int udf_cask_get_metadata_cb(char *module, as_smd_item_list_t *items, voi
 		cf_dyn_buf_append_string(out, "hash=");
 		cf_dyn_buf_append_buf(out, sha1_hex_buff, CF_SHA_HEX_BUFF_LEN);
 		cf_dyn_buf_append_string(out, ",type=");
-		cf_dyn_buf_append_string(out, as_udf_type_name[udf_type]);
+		cf_dyn_buf_append_string(out, udf_type_name); // TODO: the correct udf_type_name is returned here, but aql shows "lua" regardless.
 		cf_dyn_buf_append_string(out, ";");
 	}
 
+	cf_debug(AS_UDF, "udf_cask_get_metadata_cb: obtaining lock");
 	pthread_mutex_lock(p_get_data->mt);
+	cf_debug(AS_UDF, "udf_cask_get_metadata_cb: have lock");
 
 	p_get_data->done = true;
 	int retval = pthread_cond_signal(p_get_data->cv);
@@ -242,8 +333,10 @@ static int udf_cask_get_metadata_cb(char *module, as_smd_item_list_t *items, voi
 		cf_warning(AS_UDF, "pthread_cond_signal failed (rv %d)", retval);
 	}
 
+	cf_debug(AS_UDF, "udf_cask_get_metadata_cb: releasing lock");
 	pthread_mutex_unlock(p_get_data->mt);
 
+	cf_debug(AS_UDF, "udf_cask_get_metadata_cb: callback done");
 	return retval;
 }
 
@@ -282,12 +375,13 @@ int udf_cask_info_list(char *name, cf_dyn_buf *out)
 	pthread_mutex_destroy(&get_data_mutex);
 	pthread_cond_destroy(&get_data_cond_var);
 
+
 	return retval;
 }
 
 /*
  * Reading local directory to get specific module item's contents.
- * In future if needed we can change this to reading from smd metadata. 
+ * In future if needed we can change this to reading from smd metadata.
  */
 int udf_cask_info_get(char *name, char * params, cf_dyn_buf * out) {
 
@@ -297,7 +391,6 @@ int udf_cask_info_get(char *name, char * params, cf_dyn_buf * out) {
 	uint8_t *           content             = NULL;
 	size_t              content_len         = 0;
 	unsigned char       content_gen[256]    = {0};
-	uint8_t             udf_type            = AS_UDF_TYPE_LUA;
 
 	cf_debug(AS_INFO, "UDF CASK INFO GET");
 
@@ -307,11 +400,19 @@ int udf_cask_info_get(char *name, char * params, cf_dyn_buf * out) {
 		cf_dyn_buf_append_string(out, "error=invalid_filename");
 		return 0;
 	}
+	int type = file_udf_type(filename);
 
-	mod_lua_rdlock(&mod_lua);
+	as_module * mod = udf_type_getmod(type);
+	if(mod==NULL) {
+		cf_info(AS_INFO, "invalid or missing type : %d not valid", type);
+		cf_dyn_buf_append_string(out, "error=invalid_type");
+		return 0;
+	}
+	as_module_rdlock(mod);
 	// read the script from filesystem
 	resp = file_read(filename, &content, &content_len, content_gen);
-	mod_lua_unlock(&mod_lua);
+	as_module_unlock(mod);
+
 	if ( resp ) {
 		switch ( resp ) {
 			case 1 : {
@@ -333,7 +434,7 @@ int udf_cask_info_get(char *name, char * params, cf_dyn_buf * out) {
 		cf_dyn_buf_append_string(out, "gen=");
 		cf_dyn_buf_append_string(out, (char *) content_gen);
 		cf_dyn_buf_append_string(out, ";type=");
-		cf_dyn_buf_append_string(out, as_udf_type_name[udf_type]);
+		cf_dyn_buf_append_string(out, as_udf_type_name[type]);
 		cf_dyn_buf_append_string(out, ";content=");
 		cf_dyn_buf_append_buf(out, content, content_len);
 		cf_dyn_buf_append_string(out, ";");
@@ -373,8 +474,9 @@ int udf_cask_info_put(char *name, char * params, cf_dyn_buf * out) {
 	char	 		    *udf_content        = NULL;
 	int 		        udf_content_len    = 0;
 	// Udf type from the client and its expected size
-	char 		         type[8]            = {0};
-	int 		         type_len 	        = sizeof(type);
+	int                  type               = -1;
+	char *               type_name          = NULL;
+	int 		         type_len 	        = sizeof(type_name);
 
 	// get (required) script filename
 	char *tmp_char;
@@ -394,15 +496,31 @@ int udf_cask_info_put(char *name, char * params, cf_dyn_buf * out) {
 		return 0;
 	}
 
-	if ( as_info_parameter_get(params, "udf-type", type, &type_len) ) {
-		// Replace with DEFAULT IS LUA
-		strcpy(type, as_udf_type_name[0]);
-	}
+	// if ( as_info_parameter_get(params, "udf-type", type, &type_len) ) {
+	// 	// Replace with DEFAULT IS LUA
+	// 	strcpy(type, as_udf_type_name[0]);
+	// }
+	//
+	// // check type field
+	// int type_id = udf_name_type(type);
+	// if (-1 == type_id) {
+	// 	cf_info(AS_INFO, "invalid or missing udf-type : %s not valid", type);
+	// 	cf_dyn_buf_append_string(out, "error=invalid_udf_type");
+	// 	return 0;
+	// }
 
-	// check type field
-	if (-1 == udf_type_getid(type)) {
-		cf_info(AS_INFO, "invalid or missing udf-type : %s not valid", type);
-		cf_dyn_buf_append_string(out, "error=invalid_udf_type");
+	// completely ignoring `udf-type` for now as the type is assumed from filename
+	// TODO: better solution where provided udf-type must match assumed type or completely replaces it.
+	type = file_udf_type(filename);
+	if (type == -1) {
+		cf_info(AS_UDF, "invalid filename");
+		cf_dyn_buf_append_string(out, "error=invalid_filename");
+		return 0;
+	}
+	type_name = as_udf_type_name[type];
+	if (type_name == NULL) {
+		cf_info(AS_INFO, "invalid or missing type : %d not valid", type);
+		cf_dyn_buf_append_string(out, "error=invalid_type");
 		return 0;
 	}
 
@@ -433,11 +551,20 @@ int udf_cask_info_put(char *name, char * params, cf_dyn_buf * out) {
 	// base 64 decode it
 	uint32_t encoded_len = strlen(udf_content);
 	uint32_t decoded_len = cf_b64_decoded_buf_size(encoded_len) + 1;
-	
-	// Don't allow UDF file size > 1MB 
-	if ( decoded_len > MAX_UDF_CONTENT_LENGTH) {
-		cf_info(AS_INFO, "lua file size:%d > 1MB", decoded_len);
-		cf_dyn_buf_append_string(out, "error=invalid_udf_content_len, lua file size > 1MB");
+
+	// Check decoded file size
+	uint32_t max_udf_content_length;
+	switch (type) {
+		case AS_UDF_TYPE_LUA:
+			max_udf_content_length = MAX_UDF_CONTENT_LENGTH_LUA;
+			break;
+		case AS_UDF_TYPE_GO:
+			max_udf_content_length = MAX_UDF_CONTENT_LENGTH_GO;
+			break;
+	}
+	if ( decoded_len > max_udf_content_length) {
+		cf_info(AS_INFO, "udf %s file size:%d > %dKB", type_name, decoded_len, max_udf_content_length/1024);
+		cf_dyn_buf_append_string(out, sprintf("error=invalid_udf_content_len, %s file size > %dKB", type_name, max_udf_content_length/1024));
 		return 0;
 	}
 
@@ -452,14 +579,16 @@ int udf_cask_info_put(char *name, char * params, cf_dyn_buf * out) {
 
 	decoded_str[decoded_len] = '\0';
 
+	as_module * mod = udf_type_getmod(type);
 	as_module_error err;
-	rc = as_module_validate(&mod_lua, NULL, filename, decoded_str, decoded_len, &err);
+	rc = as_module_validate(mod, NULL, filename, decoded_str, decoded_len, &err);
 
 	cf_free(decoded_str);
 	decoded_str = NULL;
 	decoded_len = 0;
 
 	if ( rc ) {
+		// TODO: technically, validation with mod_go is not a compile error, make sure aql and other tools writes a correct error to console
 		cf_warning(AS_UDF, "udf-put: compile error: [%s:%d] %s", err.file, err.line, err.message);
 		cf_dyn_buf_append_string(out, "error=compile_error");
 		cf_dyn_buf_append_string(out, ";file=");
@@ -489,7 +618,7 @@ int udf_cask_info_put(char *name, char * params, cf_dyn_buf * out) {
 	}
 	int e = 0;
 	e += json_object_set_new(udf_obj, "content64", json_string(udf_content));
-	e += json_object_set_new(udf_obj, "type", json_string(type));
+	e += json_object_set_new(udf_obj, "type", json_string(type_name));
 	e += json_object_set_new(udf_obj, "name", json_string(filename));
 	if (e) {
 		cf_warning(AS_UDF, "could not encode UDF object, error %d", e);
@@ -502,9 +631,13 @@ int udf_cask_info_put(char *name, char * params, cf_dyn_buf * out) {
 	json_decref(udf_obj);
 	udf_obj = 0;
 
-	cf_debug(AS_UDF, "created json object %s", udf_obj_str);
+	// TODO: do we really want to dump the complete object here when it contains a base64 encoded .so file for mod-go? Commented original and added less-verbose debug message ~~GeertJohan.
+	// cf_debug(AS_UDF, "created json object %s", udf_obj_str);
+	cf_debug(AS_UDF, "created json object");
 
 	// how do I know whether to call create or add?
+	// TODO: It looks like `filename` is used as key here. What if multiple .so files for different module languages are added?
+	// TODO continued: They will either need different filenames, or otherwise they'll overwrite eachother in the smd while they're perfectly unique outside smd.
 	e = as_smd_set_metadata(udf_smd_module_name, filename, udf_obj_str);
 	if (e) {
 		cf_warning(AS_UDF, "could not add UDF metadata, error %d", e);
@@ -537,13 +670,15 @@ int udf_cask_info_remove(char *name, char * params, cf_dyn_buf * out) {
 		cf_dyn_buf_append_string(out, "error=invalid_filename");
 	}
 
+	char * user_path = file_user_path(filename);
+
 	// now check if such a file-name exists :
-	if (!g_config.mod_lua.user_path)
+	if (!user_path)
 	{
 		return -1;
 	}
 
-	snprintf(file_path, 1024, "%s/%s", g_config.mod_lua.user_path, filename);
+	snprintf(file_path, 1024, "%s/%s", user_path, filename);
 
 	cf_debug(AS_INFO, " Lua file removal full-path is : %s \n", file_path);
 
@@ -571,14 +706,14 @@ int udf_cask_info_clear_cache(char *name, char * params, cf_dyn_buf * out)
 {
 	cf_debug(AS_INFO, "UDF CASK INFO CLEAR CACHE");
 
-	mod_lua_wrlock(&mod_lua);
+	as_module_wrlock(&mod_lua);
 
 	as_module_event e = {
 		.type = AS_MODULE_EVENT_CLEAR_CACHE
 	};
 	as_module_update(&mod_lua, &e);
 
-	mod_lua_unlock(&mod_lua);
+	as_module_unlock(&mod_lua);
 
 	cf_dyn_buf_append_string(out, "ok");
 
@@ -588,8 +723,9 @@ int udf_cask_info_clear_cache(char *name, char * params, cf_dyn_buf * out)
 /**
  * (Re-)Configure UDF modules
  */
-int udf_cask_info_configure(char *name, char * params, cf_dyn_buf * buf) {
+int udf_cask_info_configure(char *name, char * params, cf_dyn_buf * buf) { // TODO: never actually called? I'm adding as_module_configure calls to udf_cask_init ~~GeertJohan.
 	as_module_configure(&mod_lua, &g_config.mod_lua);
+	as_module_configure(&mod_go, &g_config.mod_go);
 	return 0;
 }
 
@@ -631,6 +767,7 @@ udf_cask_smd_accept_fn(char *module, as_smd_item_list_t *items, void *udata, uin
 		as_smd_item_t *item = items->item[i];
 
 		if (item->action == AS_SMD_ACTION_SET) {
+			cf_debug(AS_UDF, "received SET SMD action %d key %s", item->action, item->key);
 
 			json_error_t json_err;
 			json_t *item_obj = json_loads(item->value, 0 /*flags*/, &json_err);
@@ -654,8 +791,25 @@ udf_cask_smd_accept_fn(char *module, as_smd_item_list_t *items, void *udata, uin
 
 			content_str[decoded_len] = 0;
 
-			cf_debug(AS_UDF, "pushing to %s, %d bytes [%s]", item->key, decoded_len, content_str);
-			mod_lua_wrlock(&mod_lua);
+			int type = file_udf_type(item->key);
+			as_module * mod = udf_type_getmod(type);
+			if (mod == NULL) {
+				cf_warning(AS_UDF, "could not get correct udf module for %s", item->key);
+				cf_free(content_str);
+				json_decref(content64_obj);
+				json_decref(item_obj);
+				continue;
+			}
+
+			switch (type) {
+				case AS_UDF_TYPE_LUA:
+					cf_debug(AS_UDF, "pushing to %s, %d bytes [%s]", item->key, decoded_len, content_str);
+					break;
+				case AS_UDF_TYPE_GO:
+					cf_debug(AS_UDF, "pushing to %s, %d bytes", item->key, decoded_len);
+					break;
+			}
+			as_module_wrlock(mod);
 
 			// content_gen is actually a hash. Not sure if it's filled out or what.
 			unsigned char       content_gen[256]    = {0};
@@ -664,7 +818,7 @@ udf_cask_smd_accept_fn(char *module, as_smd_item_list_t *items, void *udata, uin
 			json_decref(content64_obj);
 			json_decref(item_obj);
 			if ( e ) {
-				mod_lua_unlock(&mod_lua);
+				as_module_unlock(mod);
 				cf_info(AS_UDF, "invalid script on accept, will not register %s", item->key);
 				continue;
 			}
@@ -673,13 +827,15 @@ udf_cask_smd_accept_fn(char *module, as_smd_item_list_t *items, void *udata, uin
 				.type           = AS_MODULE_EVENT_FILE_ADD,
 				.data.filename  = item->key
 			};
-			as_module_update(&mod_lua, &ame);
-			mod_lua_unlock(&mod_lua);
+			as_module_update(mod, &ame);
+			as_module_unlock(mod);
 		}
 		else if (item->action == AS_SMD_ACTION_DELETE) {
 			cf_debug(AS_UDF, "received DELETE SMD action %d key %s", item->action, item->key);
 
-			mod_lua_wrlock(&mod_lua);
+			as_module * mod = udf_type_getmod(file_udf_type(item->key));
+
+			as_module_wrlock(mod);
 			file_remove(item->key);
 
 			// fixes potential cache issues
@@ -687,15 +843,17 @@ udf_cask_smd_accept_fn(char *module, as_smd_item_list_t *items, void *udata, uin
 				.type           = AS_MODULE_EVENT_FILE_REMOVE,
 				.data.filename  = item->key
 			};
-			as_module_update(&mod_lua, &e);
+			as_module_update(mod, &e);
 
-			mod_lua_unlock(&mod_lua);
+			as_module_unlock(mod);
 
 		}
 		else {
 			cf_info(AS_UDF, "received unknown SMD action %d", item->action);
 		}
 	}
+
+	cf_debug(AS_UDF, "UDF CASK accept fn done");
 
 	return(0);
 }
@@ -707,29 +865,41 @@ udf_cask_init()
 	// Have to delete the existing files in the user path on startup
 	DIR      * dir               = NULL;
 	struct dirent   * entry         = NULL;
-	// opendir(NULL) seg-faults
-	if (!g_config.mod_lua.user_path)
-	{
-		return -1;
-	}
-	dir = opendir(g_config.mod_lua.user_path);
-	if ( dir == 0 ) {
-		cf_warning(AS_UDF, "cask init: could not open udf directory %s: %s", g_config.mod_lua.user_path, cf_strerror(errno));
-		return -1;
-	}
-	while ( (entry = readdir(dir)) && entry->d_name) {
-		// readdir also reads "." and ".." entries.
-		if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, ".."))
+
+	char* path;
+	for (int udf_typeid=0; udf_typeid<=AS_UDF_TYPE_GO; udf_typeid++) { // TODO: use length from as_udf_type_name instead of AS_UDF_TYPE_GO
+		path = udf_type_getuserpath(udf_typeid);
+		cf_debug(AS_UDF, "cleaning up udf files from %s", path);
+
+		// opendir(NULL) seg-faults
+		if (!path)
 		{
-			char fn[1024];
-			snprintf(fn, sizeof(fn), "%s/%s", g_config.mod_lua.user_path, entry->d_name);
-			int rem_rv = remove(fn);
-			if (rem_rv != 0) {
-				cf_warning(AS_UDF, "Failed to remove the file %s. Error %d", fn, errno);
+			return -1;
+		}
+		dir = opendir(path);
+		if ( dir == 0 ) {
+			cf_warning(AS_UDF, "cask init: could not open udf directory %s: %s", path, cf_strerror(errno));
+			return -1;
+		}
+		while ( (entry = readdir(dir)) && entry->d_name) {
+			// readdir also reads "." and ".." entries.
+			if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, ".."))
+			{
+				char fn[1024];
+				snprintf(fn, sizeof(fn), "%s/%s", path, entry->d_name);
+				int rem_rv = remove(fn);
+				if (rem_rv != 0) {
+					cf_warning(AS_UDF, "Failed to remove the file %s. Error %d", fn, errno);
+				}
 			}
 		}
+		
+		// init modules
+		as_module_configure(&mod_lua, &g_config.mod_lua);
+		as_module_configure(&mod_go, &g_config.mod_go);
+		
+		closedir(dir);
 	}
-	closedir(dir);
 
 	// as_smd_create_module(udf_smd_module_name, udf_cask_smd_merge_fn, 0, udf_cask_smd_accept_fn, 0);
 	// take the default merge function

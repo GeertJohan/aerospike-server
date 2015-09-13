@@ -32,7 +32,10 @@
 
 // UDF Types
 #define AS_UDF_TYPE_LUA 0
-#define MAX_UDF_CONTENT_LENGTH (1024 * 1024) //(1MB)
+#define AS_UDF_TYPE_GO 1
+#define MAX_UDF_CONTENT_LENGTH_LUA (1024 * 1024) //(1MB)
+#define MAX_UDF_CONTENT_LENGTH_GO (4 * 1024 * 1024) //(4MB)
+
 
 extern char *as_udf_type_name[];
 
@@ -67,4 +70,3 @@ int udf_cask_get_udf(char *module, char *udf_type, uint8_t **buf , size_t *buf_l
 // called by a module to get the data associated with a udf (the fully qualified file name)
 // caller passes in a max-size string buffer that gets filled out (null terminated)
 int udf_cask_get_udf_filename(char *module, char *udf_type, char *filename );
-

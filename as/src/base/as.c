@@ -389,6 +389,7 @@ main(int argc, char **argv)
 	validate_directory(c->work_directory, "work");
 	validate_directory(c->mod_lua.system_path, "Lua system");
 	validate_directory(c->mod_lua.user_path, "Lua user");
+	validate_directory(c->mod_go.user_path, "Go user");
 	validate_smd_directory();
 
 	// Initialize subsystems. At this point we're allocating local resources,

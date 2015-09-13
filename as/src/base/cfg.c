@@ -37,6 +37,7 @@
 #include "xdr_config.h"
 
 #include "aerospike/mod_lua_config.h"
+#include "aerospike/mod_go_config.h"
 #include "citrusleaf/alloc.h"
 #include "citrusleaf/cf_atomic.h"
 #include "citrusleaf/cf_clock.h"
@@ -200,6 +201,9 @@ cfg_set_defaults()
 	strcpy(c->mod_lua.system_path, "/opt/aerospike/sys/udf/lua");
 	strcpy(c->mod_lua.user_path, "/opt/aerospike/usr/udf/lua");
 
+	// Mod-go defaults.
+	strcpy(c->mod_go.user_path, "/opt/aerospike/usr/udf/go"); // TODO: rename user_path to so_path or objects_path ?
+
 	// Cluster Topology: With the new Rack Aware feature, we allow the customers
 	// to define their nodes and groups with THEIR names, and thus overrule the
 	// autogenerate node ID based on MAC address and port (i.e. Hardware
@@ -246,6 +250,7 @@ typedef enum {
 	CASE_XDR_BEGIN,
 	// Recent (non-2.x) functionality:
 	CASE_MOD_LUA_BEGIN,
+	CASE_MOD_GO_BEGIN,
 	CASE_CLUSTER_BEGIN,
 	CASE_SECURITY_BEGIN,
 
@@ -577,6 +582,9 @@ typedef enum {
 	CASE_MOD_LUA_SYSTEM_PATH,
 	CASE_MOD_LUA_USER_PATH,
 
+	// Mod-go options:
+	CASE_MOD_GO_USER_PATH,
+
 	// Cluster options:
 	CASE_CLUSTER_SELF_NODE_ID,
 	CASE_CLUSTER_SELF_GROUP_ID,
@@ -629,6 +637,7 @@ const cfg_opt GLOBAL_OPTS[] = {
 		{ "namespace",						CASE_NAMESPACE_BEGIN },
 		{ "xdr",							CASE_XDR_BEGIN },
 		{ "mod-lua",						CASE_MOD_LUA_BEGIN },
+		{ "mod-go",							CASE_MOD_GO_BEGIN },
 		{ "cluster",						CASE_CLUSTER_BEGIN },
 		{ "security",						CASE_SECURITY_BEGIN }
 };
@@ -975,6 +984,11 @@ const cfg_opt MOD_LUA_OPTS[] = {
 		{ "}",								CASE_CONTEXT_END }
 };
 
+const cfg_opt MOD_GO_OPTS[] = {
+		{ "user-path",						CASE_MOD_GO_USER_PATH },
+		{ "}",								CASE_CONTEXT_END }
+};
+
 const cfg_opt CLUSTER_OPTS[] = {
 		{ "self-node-id",					CASE_CLUSTER_SELF_NODE_ID },
 		{ "self-group-id",					CASE_CLUSTER_SELF_GROUP_ID },
@@ -1042,6 +1056,7 @@ const int NUM_NAMESPACE_SET_ENABLE_XDR_OPTS			= sizeof(NAMESPACE_SET_ENABLE_XDR_
 const int NUM_NAMESPACE_SI_OPTS						= sizeof(NAMESPACE_SI_OPTS) / sizeof(cfg_opt);
 const int NUM_NAMESPACE_SINDEX_OPTS					= sizeof(NAMESPACE_SINDEX_OPTS) / sizeof(cfg_opt);
 const int NUM_MOD_LUA_OPTS							= sizeof(MOD_LUA_OPTS) / sizeof(cfg_opt);
+const int NUM_MOD_GO_OPTS							= sizeof(MOD_GO_OPTS) / sizeof(cfg_opt);
 const int NUM_CLUSTER_OPTS							= sizeof(CLUSTER_OPTS) / sizeof(cfg_opt);
 const int NUM_CLUSTER_GROUP_OPTS					= sizeof(CLUSTER_GROUP_OPTS) / sizeof(cfg_opt);
 const int NUM_SECURITY_OPTS							= sizeof(SECURITY_OPTS) / sizeof(cfg_opt);
@@ -1088,6 +1103,7 @@ typedef enum {
 	NAMESPACE, NAMESPACE_STORAGE_DEVICE, NAMESPACE_STORAGE_KV, NAMESPACE_SET, NAMESPACE_SI, NAMESPACE_SINDEX,
 	XDR, XDR_DATACENTER,
 	MOD_LUA,
+	MOD_GO,
 	CLUSTER, CLUSTER_GROUP,
 	SECURITY, SECURITY_LOG, SECURITY_SYSLOG,
 	// Must be last, use for sanity-checking:
@@ -1103,6 +1119,7 @@ const char* CFG_PARSER_STATES[] = {
 		"NAMESPACE", "NAMESPACE_STORAGE_DEVICE", "NAMESPACE_STORAGE_KV", "NAMESPACE_SET", "NAMESPACE_SI", "NAMESPACE_SINDEX",
 		"XDR", "XDR_DATACENTER",
 		"MOD_LUA",
+		"MOD_GO",
 		"CLUSTER", "CLUSTER_GROUP",
 		"SECURITY", "SECURITY_LOG", "SECURITY_SYSLOG"
 };
@@ -1785,6 +1802,9 @@ as_config_init(const char *config_file)
 				break;
 			case CASE_MOD_LUA_BEGIN:
 				cfg_begin_context(&state, MOD_LUA);
+				break;
+			case CASE_MOD_GO_BEGIN:
+				cfg_begin_context(&state, MOD_GO);
 				break;
 			case CASE_CLUSTER_BEGIN:
 				cfg_begin_context(&state, CLUSTER);
@@ -2955,6 +2975,24 @@ as_config_init(const char *config_file)
 				break;
 			case CASE_MOD_LUA_USER_PATH:
 				cfg_strcpy(&line, c->mod_lua.user_path, sizeof(c->mod_lua.user_path));
+				break;
+			case CASE_CONTEXT_END:
+				cfg_end_context(&state);
+				break;
+			case CASE_NOT_FOUND:
+			default:
+				cfg_unknown_name_tok(&line);
+				break;
+			}
+			break;
+
+		//==================================================
+		// Parse mod-go context items.
+		//
+		case MOD_GO:
+			switch(cfg_find_tok(line.name_tok, MOD_GO_OPTS, NUM_MOD_GO_OPTS)) {
+			case CASE_MOD_GO_USER_PATH:
+				cfg_strcpy(&line, c->mod_go.user_path, sizeof(c->mod_go.user_path));
 				break;
 			case CASE_CONTEXT_END:
 				cfg_end_context(&state);

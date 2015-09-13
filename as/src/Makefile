@@ -69,6 +69,7 @@ INCLUDES += -I$(CF)/include
 INCLUDES += -I$(AI)/include
 INCLUDES += -I$(COMMON)/target/$(PLATFORM)/include
 INCLUDES += -I$(MOD_LUA)/target/$(PLATFORM)/include
+INCLUDES += -I$(MOD_GO)/target/$(PLATFORM)/include
 INCLUDES += -I$(JANSSON)/src
 
 ifeq ($(USE_LUAJIT),1)
@@ -84,6 +85,7 @@ endif
 AS_LIBRARIES += $(LIBRARY_DIR)/libcf.a
 AS_LIBRARIES += $(LIBRARY_DIR)/libai.a
 AS_LIBRARIES += $(MOD_LUA)/target/$(PLATFORM)/lib/libmod_lua.a
+AS_LIBRARIES += $(MOD_GO)/target/$(PLATFORM)/lib/libmod_go.a
 AS_LIBRARIES += $(COMMON)/target/$(PLATFORM)/lib/libaerospike-common.a
 AS_LIBRARIES += $(LIBRARY_DIR)/libxdrconfig.a
 

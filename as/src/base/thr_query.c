@@ -109,7 +109,8 @@
 #include "aerospike/as_string.h"
 #include "aerospike/as_rec.h"
 #include "aerospike/as_val.h"
-#include "aerospike/mod_lua.h"
+#include "aerospike/mod_go.h" // TODO: unused?
+#include "aerospike/mod_lua.h" // TODO: unused?
 #include "citrusleaf/cf_ll.h"
 
 #include "ai.h"

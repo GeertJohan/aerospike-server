@@ -14,6 +14,7 @@ INCLUDES += -I$(AS)/include
 INCLUDES += -I$(XDR_INCLUDE_DIR)
 INCLUDES += -I$(COMMON)/target/$(PLATFORM)/include
 INCLUDES += -I$(MOD_LUA)/target/$(PLATFORM)/include
+INCLUDES += -I$(MOD_GO)/target/$(PLATFORM)/include
 
 LIBRARY = $(LIBRARY_DIR)/libai.a
 
